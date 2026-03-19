@@ -24,14 +24,19 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels: { app: ollama }
+    matchLabels:
+      app: ollama
   template:
     metadata:
-      labels: { app: ollama }
+      labels:
+        app: ollama
     spec:
+      imagePullSecrets:
+        - name: swr-secret   # 👈 新增（必须和你创建的一致）
       containers:
       - name: ollama
-        image: ollama/ollama:latest
+        image: swr.cn-north-4.myhuaweicloud.com/sre-ai/ollama:latest   # 👈 改这里
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 11434
         volumeMounts:
@@ -49,7 +54,8 @@ metadata:
   namespace: ai-services
 spec:
   type: NodePort
-  selector: { app: ollama }
+  selector:
+    app: ollama
   ports:
   - port: 11434
     targetPort: 11434
