@@ -33,8 +33,13 @@ spec:
     spec:
       containers:
       - name: gateway
-        image: ai-gateway:v4
+        #改成v5，v5版本更新了大模型url和名称解耦
+        image: ai-gateway:v5   
         imagePullPolicy: IfNotPresent # 同样使用本地镜像
         ports:
         - containerPort: 3000
-        # Gateway 代码中硬编码了连接地址，所以这里不需要环境变量
+        env:
+        - name: OLLAMA_URL
+          value: "http://10.32.118.44:11434/api/chat"
+        - name: OLLAMA_MODEL
+          value: "qwen3:4b"
