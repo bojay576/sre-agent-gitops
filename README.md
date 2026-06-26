@@ -101,13 +101,137 @@ sre-agent-gitops/
 └── README.md
 ```
 
-## 前置条件
+## 新电脑部署指南
 
-- **Kubernetes 集群** v1.24+（k3s / minikube / Kind / 云原生集群均可）
-- **kubectl** 已配置并可操作目标集群
-- 集群能够拉取 Docker Hub 镜像（`ollama/ollama`、`mysql:8.0`）
+在一台全新的电脑上部署本项目，需要满足以下条件。整个过程约需 **10-20 分钟**（取决于网络和模型下载速度）。
 
-> **注意：** `ai-gateway:v5`、`sre-agent:v1.0` 是本地镜像，需要自行构建并导入集群。`mcp-hr-server:v1` 可从提供的 tar 包导入。
+### 硬件要求
+
+| 模式 | CPU | 内存 | 磁盘 | GPU（可选） |
+|------|-----|------|------|------------|
+| 本地 Ollama | 4 核+ | 16 GB+ | 50 GB+ | 推荐 NVIDIA GPU |
+| 仅外部 API | 2 核 | 4 GB | 20 GB | 不需要 |
+
+> **说明：** 如果只用外部 API 模式（不需要本地 Ollama），硬件要求大幅降低，普通笔记本即可。
+> 本地 Ollama 模式需要运行 `qwen3:4b`（约 2.5 GB），建议 16 GB 以上内存。
+
+### 软件依赖
+
+| 工具 | 版本要求 | 安装方式 |
+|------|---------|---------|
+| **kubectl** | v1.24+ | `brew install kubectl` / [官方文档](https://kubernetes.io/docs/tasks/tools/) |
+| **容器运行时** | — | Docker Desktop / containerd / nerdctl |
+| **Go**（仅构建 MCP Server） | 1.21+ | `brew install go` / [golang.org](https://go.dev/dl/) |
+
+可选：
+- **nerdctl** — 用于导入 `.tar` 镜像到 containerd（k3s 环境推荐）
+- **Docker** — 用于构建 MCP Server 镜像
+- **Helm** — 可选，用于安装 OpenEBS
+
+### Kubernetes 集群
+
+你需要一个运行的 Kubernetes 集群。根据场景选择：
+
+| 方案 | 适用场景 | 安装命令 |
+|------|---------|---------|
+| **k3s** | Linux 单机，资源占用低 | `curl -sfL https://get.k3s.io \| sh` |
+| **Docker Desktop** | macOS/Windows，开箱即用 | 设置中启用 Kubernetes |
+| **minikube** | 跨平台，功能完整 | `minikube start --cpus 4 --memory 8192` |
+| **Kind** | CI/测试环境 | `kind create cluster` |
+| 云集群（TKE/ACK/EKS 等） | 生产环境 | 各云厂商控制台 |
+
+集群就绪后验证：
+```bash
+kubectl cluster-info
+kubectl get nodes
+```
+
+### 存储
+
+项目使用 PVC 持久化数据，需要集群有可用的 **StorageClass**。
+
+`deploy.sh` 脚本会自动检测，如果没有存储类，会引导你安装 **OpenEBS**（轻量级本地存储）：
+
+```bash
+# 手动安装 OpenEBS（可选）
+kubectl apply -f https://openebs.github.io/charts/openebs-operator.yaml
+```
+
+如果你的集群已有其他存储类（如 `local-path`、`gp2`、`managed-csi` 等），部署时选择使用已有存储类即可。
+
+### 镜像获取
+
+这是新电脑部署最关键的环节。五个组件镜像的来源：
+
+| 组件 | 镜像 | 来源 | 新电脑上如何获取 |
+|------|------|------|-----------------|
+| **Ollama** | `ollama/ollama:latest` | Docker Hub | 自动拉取（需网络） |
+| **MySQL** | `mysql:8.0` | Docker Hub | 自动拉取（需网络） |
+| **MCP Server** | `mcp-hr-server:v1` | **本仓库源码构建** | `cd src/mcp-hr-server && docker build -t mcp-hr-server:v1 .` |
+| **AI Gateway** | `ai-gateway:v5` | **⚠️ 需自行构建** | 源码不在此仓库，需另行构建或从已有环境导出 |
+| **SRE Agent** | `sre-agent:v1.0` | **⚠️ 需自行构建** | 源码不在此仓库，需另行构建或从已有环境导出 |
+
+> **⚠️ 注意：** `ai-gateway:v5` 和 `sre-agent:v1.0` 的源码不在本仓库中。在新电脑上首次部署时，你需要：
+> - 从其他已有环境导出镜像（`docker save` → `docker load`）
+> - 或从私有镜像仓库拉取
+> - 或自行构建这两个镜像
+>
+> `deploy.sh` 会检测镜像是否存在，缺失时会给出提示。
+
+快速检查镜像是否就绪：
+```bash
+# Docker 环境
+docker images | grep -E "mcp-hr-server|ai-gateway|sre-agent"
+
+# containerd 环境（k3s）
+nerdctl -n k8s.io image ls | grep -E "mcp-hr-server|ai-gateway|sre-agent"
+```
+
+### 网络
+
+- 集群需要能访问 **Docker Hub**（拉取 `ollama/ollama`、`mysql:8.0`）
+- 如果用外部 API 模式，需要能访问对应的 API 端点（如 `api.openai.com`）
+- AI Gateway 通过 **NodePort 30080** 暴露，确保节点 IP 可访问
+
+### 部署流程图
+
+```
+新电脑
+  │
+  ├─ 1. 安装 kubectl + Docker/k3s
+  ├─ 2. 启动 Kubernetes 集群
+  ├─ 3. 安装 OpenEBS（或使用已有存储类）
+  ├─ 4. 构建/导入本地镜像
+  │     ├── mcp-hr-server:v1   ← 本仓库有源码，docker build
+  │     ├── ai-gateway:v5      ← 需从其他环境导出或自行构建
+  │     └── sre-agent:v1.0     ← 需从其他环境导出或自行构建
+  ├─ 5. 运行 ./deploy.sh
+  │     ├── 选择 Ollama 或外部 API 模式
+  │     ├── 自动部署所有组件
+  │     └── 等待 Pod 就绪
+  └─ 6. 验证：curl http://<node-ip>:30080
+```
+
+### 快速验证
+
+部署完成后，运行以下命令确认一切正常：
+
+```bash
+# 所有 Pod 应处于 Running 状态
+kubectl get pods -n ai-services
+kubectl get pods -n default -l app=sre-agent
+
+# MCP Server 应打印数据库连接成功
+kubectl logs -n ai-services deploy/mcp-hr-server | head -5
+# 预期输出: "Successfully connected to MySQL"
+#           "Starting MCP Server on :8080/sse"
+
+# AI Gateway 应能访问
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+curl -s "http://${NODE_IP}:30080" && echo "Gateway OK"
+```
+
+---
 
 ## LLM 模式
 
