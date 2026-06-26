@@ -77,6 +77,23 @@ spec:
           value: "hr_db"  # 默认创建的库名
         ports:
         - containerPort: 3306
+        resources:
+          requests:
+            cpu: "0.5"
+            memory: "512Mi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+        livenessProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 3306
+          initialDelaySeconds: 5
+          periodSeconds: 5
         volumeMounts:
         - name: mysql-storage
           mountPath: /var/lib/mysql # MySQL数据存放的标准路径

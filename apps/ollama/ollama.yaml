@@ -41,6 +41,25 @@ spec:
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 11434
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 11434
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 11434
+          initialDelaySeconds: 10
+          periodSeconds: 10
         volumeMounts:
         - name: ollama-storage
           mountPath: /root/.ollama

@@ -38,6 +38,25 @@ spec:
         imagePullPolicy: IfNotPresent # 同样使用本地镜像
         ports:
         - containerPort: 3000
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
         env:
         - name: OLLAMA_URL
           value: "http://ollama-service:11434/api/chat"

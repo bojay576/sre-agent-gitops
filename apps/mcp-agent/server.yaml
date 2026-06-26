@@ -41,3 +41,22 @@ spec:
           value: "root:native@tcp(mysql-service:3306)/hr_db"
         ports:
         - containerPort: 8080
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /sse
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /sse
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5

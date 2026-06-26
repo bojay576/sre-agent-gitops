@@ -18,3 +18,10 @@ spec:
       - name: agent
         image: sre-agent:v1.0 # 使用我们本地构建的镜像
         imagePullPolicy: IfNotPresent # 关键！强制使用本地镜像
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
