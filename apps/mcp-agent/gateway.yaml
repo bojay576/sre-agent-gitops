@@ -62,3 +62,10 @@ spec:
           value: "http://ollama-service:11434/api/chat"
         - name: OLLAMA_MODEL
           value: "qwen3:4b"
+        # 外部 API 模式时使用（本地 Ollama 模式下值为空字符串，不影响使用）
+        - name: LLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: gateway-llm-secret
+              key: llm-api-key
+              optional: true
