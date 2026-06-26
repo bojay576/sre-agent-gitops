@@ -31,11 +31,13 @@ spec:
       labels:
         app: ollama
     spec:
-      imagePullSecrets:
-        - name: swr-secret   # 👈 新增（必须和你创建的一致）
+      # 默认使用 Docker Hub 官方镜像，无需 pull secret
+      # 如使用华为云 SWR 私有仓库，取消下面两行注释并替换 image:
+      # imagePullSecrets:
+      #   - name: swr-secret
       containers:
       - name: ollama
-        image: swr.cn-north-4.myhuaweicloud.com/sre-ai/ollama:latest   # 👈 改这里
+        image: ollama/ollama:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 11434
