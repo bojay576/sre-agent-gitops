@@ -1,0 +1,24 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Docker image archives (large binaries)
+*.tar
+
+# Go build artifacts
+src/mcp-hr-server/mcp-server
+
+# Kubernetes secrets (sensitive data)
+*.secret.yaml
+secrets/
+
+# Temp files
+*.tmp
+*.log
