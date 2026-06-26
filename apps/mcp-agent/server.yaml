@@ -36,9 +36,10 @@ spec:
         imagePullPolicy: IfNotPresent # 使用本地导入的镜像，不尝试去 Docker Hub 拉取
         env:
         - name: DSN
-          # 连接在模块二中部署的 MySQL 服务
-          # 格式: user:password@tcp(service-name:port)/dbname
-          value: "root:native@tcp(mysql-service:3306)/hr_db"
+          valueFrom:
+            secretKeyRef:
+              name: mcp-server-secret
+              key: dsn
         ports:
         - containerPort: 8080
         resources:

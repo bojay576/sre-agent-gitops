@@ -72,7 +72,10 @@ spec:
         image: mysql:8.0 # 使用官方镜像
         env:
         - name: MYSQL_ROOT_PASSWORD
-          value: "native" # 实验环境密码统一，生产环境请用 Secret
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: root-password
         - name: MYSQL_DATABASE
           value: "hr_db"  # 默认创建的库名
         ports:
