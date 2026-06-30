@@ -334,6 +334,21 @@ kubectl apply -f apps/sre-agent/deployment.yaml
 | `ai-gateway:v5` | 本地构建 | 见下方「构建本地镜像」 |
 | `sre-agent:v1.0` | 本地构建 | 见下方「构建本地镜像」 |
 
+## CI/CD
+
+仓库包含 GitHub Actions workflow：`.github/workflows/build.yml`。
+
+- Pull Request：对 `src/ai-gateway`、`src/mcp-hr-server`、`src/sre-agent` 执行 `go vet`、`go test`，并构建 Docker 镜像但不推送
+- Push 到 `main`：构建并推送镜像到 GHCR，标签包含 `latest` 和 `sha-<commit>`
+
+默认发布路径：
+
+```text
+ghcr.io/bojay576/ai-gateway:latest
+ghcr.io/bojay576/mcp-hr-server:latest
+ghcr.io/bojay576/sre-agent:latest
+```
+
 ### 使用私有镜像仓库（可选）
 
 如果需要在离线环境或私有仓库使用，可参考以下方式：
