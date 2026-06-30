@@ -119,26 +119,28 @@ choose_mode() {
     case "$mode_choice" in
         1)
             DEPLOY_MODE="ollama"
-            OLLAMA_URL="http://ollama-service:11434/api/chat"
-            OLLAMA_MODEL="qwen3:4b"
+            LLM_PROVIDER="ollama"
+            LLM_API_URL="http://ollama-service:11434/api/chat"
+            LLM_MODEL="qwen3:4b"
             NEED_OLLAMA=true
-            info "模式: 本地 Ollama (${OLLAMA_MODEL})"
+            info "模式: 本地 Ollama (${LLM_MODEL})"
             ;;
         2)
             DEPLOY_MODE="api"
+            LLM_PROVIDER="openai"
             NEED_OLLAMA=false
 
-            read -r -p "  API URL (兼容 OpenAI/Ollama 格式): " api_url
-            OLLAMA_URL="${api_url}"
+            read -r -p "  API URL (OpenAI 兼容格式，如 /v1/chat/completions): " api_url
+            LLM_API_URL="${api_url}"
             read -r -p "  模型名称 (如 gpt-4o, claude-sonnet-4-6, qwen-plus): " api_model
-            OLLAMA_MODEL="${api_model}"
+            LLM_MODEL="${api_model}"
             read -r -sp "  API Key: " api_key
             echo ""
             if [ -z "$api_key" ]; then
                 warn "未提供 API Key，将以无认证模式运行"
             fi
             LLM_API_KEY="${api_key}"
-            info "模式: 外部 API (${OLLAMA_MODEL} @ ${OLLAMA_URL})"
+            info "模式: 外部 API (${LLM_MODEL} @ ${LLM_API_URL})"
             ;;
         *)
             err "无效选择"
@@ -262,12 +264,13 @@ do_deploy() {
     # 5f. 部署 AI Gateway
     info "部署 AI Gateway..."
 
-    # 用实际值替换 gateway.yaml 中的占位变量
+    # 用实际值替换 gateway.yaml 中的默认 LLM 配置
     local gateway_yaml="${SCRIPT_DIR}/apps/mcp-agent/gateway.yaml"
-    if [ -n "${OLLAMA_URL:-}" ] && [ -n "${OLLAMA_MODEL:-}" ]; then
+    if [ -n "${LLM_API_URL:-}" ] && [ -n "${LLM_MODEL:-}" ]; then
         # 生成带配置的临时 manifest
-        sed -e "s|value: \"http://ollama-service:11434/api/chat\"|value: \"${OLLAMA_URL}\"|g" \
-            -e "s|value: \"qwen3:4b\"|value: \"${OLLAMA_MODEL}\"|g" \
+        sed -e "s|value: \"ollama\"|value: \"${LLM_PROVIDER}\"|g" \
+            -e "s|value: \"http://ollama-service:11434/api/chat\"|value: \"${LLM_API_URL}\"|g" \
+            -e "s|value: \"qwen3:4b\"|value: \"${LLM_MODEL}\"|g" \
             "$gateway_yaml" | kubectl apply -f -
     else
         kubectl apply -f "$gateway_yaml"
@@ -322,11 +325,11 @@ pull_model() {
     local installed
     installed=$(kubectl exec -n "${NAMESPACE}" "${ollama_pod}" -- ollama list 2>/dev/null || echo "")
 
-    if echo "$installed" | grep -q "${OLLAMA_MODEL}"; then
-        info "模型 ${OLLAMA_MODEL} 已存在"
+    if echo "$installed" | grep -q "${LLM_MODEL}"; then
+        info "模型 ${LLM_MODEL} 已存在"
     else
-        info "拉取模型: ${OLLAMA_MODEL}（可能需要几分钟，取决于模型大小）..."
-        kubectl exec -n "${NAMESPACE}" "${ollama_pod}" -- ollama pull "${OLLAMA_MODEL}"
+        info "拉取模型: ${LLM_MODEL}（可能需要几分钟，取决于模型大小）..."
+        kubectl exec -n "${NAMESPACE}" "${ollama_pod}" -- ollama pull "${LLM_MODEL}"
         info "模型拉取完成"
     fi
 }

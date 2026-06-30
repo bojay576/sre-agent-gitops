@@ -58,10 +58,18 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 5
         env:
+        - name: LLM_PROVIDER
+          value: "ollama"
+        - name: LLM_API_URL
+          value: "http://ollama-service:11434/api/chat"
+        - name: LLM_MODEL
+          value: "qwen3:4b"
         - name: OLLAMA_URL
           value: "http://ollama-service:11434/api/chat"
         - name: OLLAMA_MODEL
           value: "qwen3:4b"
+        - name: MCP_SERVER_URL
+          value: "http://mcp-server-service:8080/sse"
         # 外部 API 模式时使用（本地 Ollama 模式下值为空字符串，不影响使用）
         - name: LLM_API_KEY
           valueFrom:

@@ -15,7 +15,7 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-脚本会交互式引导你完成：前置检查 → 存储类配置 → 选择 LLM 模式 → 导入镜像 → 部署 → 等待就绪 → 拉取模型。
+脚本会交互式引导你完成：前置检查 → 存储类配置 → 选择 LLM 模式 → 构建/检查镜像 → 部署 → 等待就绪 → 拉取模型。
 
 ## 架构概览
 
@@ -242,11 +242,11 @@ curl -s "http://${NODE_IP}:30080" && echo "Gateway OK"
 ./deploy.sh  # 选择 [1] 本地 Ollama
 ```
 
-默认模型 `qwen3:4b`，可修改 `apps/mcp-agent/gateway.yaml` 中的 `OLLAMA_MODEL` 环境变量切换模型。部署后脚本会自动拉取模型。
+默认模型 `qwen3:4b`，可修改 `apps/mcp-agent/gateway.yaml` 中的 `LLM_MODEL` 环境变量切换模型。部署后脚本会自动拉取模型。
 
 ### 模式二：外部 API
 
-使用 OpenAI 兼容的云端 API 服务，无需部署 Ollama，只需 API Key。
+使用 OpenAI 兼容的云端 API 服务，无需部署 Ollama，只需 API Key。Gateway 通过 `LLM_PROVIDER=openai` 发送 `/v1/chat/completions` 格式请求；本地模式则通过 `LLM_PROVIDER=ollama` 发送 Ollama `/api/chat` 格式请求。
 
 ```bash
 ./deploy.sh  # 选择 [2] 外部 API
@@ -262,8 +262,6 @@ curl -s "http://${NODE_IP}:30080" && echo "Gateway OK"
 | 阿里通义千问 | `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` | `qwen-plus` |
 | DeepSeek | `https://api.deepseek.com/v1/chat/completions` | `deepseek-chat` |
 | 其他兼容服务 | 填写对应的 API 地址 | 对应的模型名称 |
-
-> **注意：** AI Gateway 使用 Ollama 格式（`/api/chat`）调用 LLM。如果外部 API 是 OpenAI 格式（`/v1/chat/completions`），需要在中间加一层代理转换（如 [litellm](https://github.com/BerriAI/litellm)），或者确认 gateway 镜像是否支持 OpenAI 格式。
 
 ## 手动部署步骤
 
@@ -305,9 +303,11 @@ kubectl apply -f apps/mcp-agent/server.yaml
 
 ```yaml
 env:
-- name: OLLAMA_URL
-  value: "http://ollama-service:11434/api/chat"  # 或外部 API 地址
-- name: OLLAMA_MODEL
+- name: LLM_PROVIDER
+  value: "ollama"                                # ollama | openai | custom
+- name: LLM_API_URL
+  value: "http://ollama-service:11434/api/chat"  # 或 OpenAI 兼容 API 地址
+- name: LLM_MODEL
   value: "qwen3:4b"                              # 或外部模型名
 ```
 
@@ -370,9 +370,13 @@ curl http://<node-ip>:30080
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `OLLAMA_URL` | LLM API 地址 | `http://ollama-service:11434/api/chat` |
-| `OLLAMA_MODEL` | 使用的模型名称 | `qwen3:4b` |
+| `LLM_PROVIDER` | LLM API 类型：`ollama`、`openai` 或 `custom` | `ollama` |
+| `LLM_API_URL` | LLM API 地址 | `http://ollama-service:11434/api/chat` |
+| `LLM_MODEL` | 使用的模型名称 | `qwen3:4b` |
 | `LLM_API_KEY` | API Key（外部 API 模式，通过 Secret 注入） | - |
+| `MCP_SERVER_URL` | MCP Server SSE 地址 | `http://mcp-server-service:8080/sse` |
+
+`OLLAMA_URL` 和 `OLLAMA_MODEL` 仍作为兼容变量保留，新配置建议使用 `LLM_API_URL` 和 `LLM_MODEL`。
 
 ### MCP Server 环境变量
 
@@ -406,10 +410,10 @@ docker build -t sre-agent:v1.0 .
 检查 PVC 状态：`kubectl get pvc -n ai-services`。如果 PVC 无法绑定，先安装 OpenEBS：`kubectl apply -f https://openebs.github.io/charts/openebs-operator.yaml`
 
 **Q: 外部 API 模式请求失败？**
-确认 gateway 镜像是否支持 OpenAI 格式的 API。当前 gateway 使用 Ollama 格式（`/api/chat`），如果外部 API 是 OpenAI 格式（`/v1/chat/completions`），可使用 [litellm](https://github.com/BerriAI/litellm) 做格式转换代理。
+确认 `LLM_PROVIDER=openai`、`LLM_API_URL` 指向 `/v1/chat/completions` 兼容端点，并且 `gateway-llm-secret` 中的 `llm-api-key` 有效。使用 Ollama 时保持 `LLM_PROVIDER=ollama` 和 `/api/chat` 地址。
 
 **Q: 如何切换模型？**
-修改 `apps/mcp-agent/gateway.yaml` 中的 `OLLAMA_MODEL` 值，然后 `kubectl apply` 重新应用。
+修改 `apps/mcp-agent/gateway.yaml` 中的 `LLM_MODEL` 值，然后 `kubectl apply` 重新应用。
 
 ## 许可证
 
