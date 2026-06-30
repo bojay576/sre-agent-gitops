@@ -147,76 +147,71 @@ choose_mode() {
     esac
 }
 
-# ---- 4. 导入镜像 ----
+# ---- 4. 准备镜像 ----
 import_images() {
-    step "导入容器镜像"
+    step "准备本地容器镜像"
 
-    local loaded=0
-
-    # MCP Server 镜像
-    local tar_file="${SCRIPT_DIR}/src/mcp-hr-server/mcp-hr-server.tar"
-    if [ -f "$tar_file" ]; then
-        if load_image_from_tar "$tar_file" "mcp-hr-server:v1"; then
-            loaded=$((loaded + 1))
-        fi
-    else
-        warn "MCP Server tar 不存在: ${tar_file}，请先构建: cd src/mcp-hr-server && docker build -t mcp-hr-server:v1 ."
-    fi
-
-    # SRE Agent (本地镜像)
-    if docker image inspect sre-agent:v1.0 &>/dev/null 2>&1; then
-        info "sre-agent:v1.0 镜像已存在"
-    else
-        warn "sre-agent:v1.0 镜像不存在，将尝试拉取"
-    fi
-
-    # AI Gateway (本地镜像)
-    if docker image inspect ai-gateway:v5 &>/dev/null 2>&1; then
-        info "ai-gateway:v5 镜像已存在"
-    else
-        warn "ai-gateway:v5 镜像不存在，将尝试拉取"
-    fi
+    ensure_local_image "mcp-hr-server:v1" "${SCRIPT_DIR}/src/mcp-hr-server"
+    ensure_local_image "ai-gateway:v5" "${SCRIPT_DIR}/src/ai-gateway"
+    ensure_local_image "sre-agent:v1.0" "${SCRIPT_DIR}/src/sre-agent"
 
     return 0
 }
 
-load_image_from_tar() {
-    local tar_file="$1"
-    local image_name="$2"
+ensure_local_image() {
+    local image_name="$1"
+    local context_dir="$2"
 
-    # 先检查镜像是否已存在
+    if image_exists "$image_name"; then
+        info "镜像已存在: ${image_name}"
+        return 0
+    fi
+
+    if [ ! -f "${context_dir}/Dockerfile" ]; then
+        warn "未找到 ${image_name} 的 Dockerfile: ${context_dir}/Dockerfile"
+        return 1
+    fi
+
     case "$RUNTIME" in
         nerdctl)
-            if nerdctl -n k8s.io image inspect "$image_name" &>/dev/null 2>&1; then
-                info "镜像已存在: ${image_name}"
-                return 0
-            fi
-            info "导入镜像到 containerd: ${image_name}"
-            nerdctl -n k8s.io load -i "$tar_file"
+            info "构建镜像到 containerd: ${image_name}"
+            nerdctl -n k8s.io build -t "$image_name" "$context_dir"
             ;;
         docker)
-            if docker image inspect "$image_name" &>/dev/null 2>&1; then
-                info "镜像已存在: ${image_name}"
-                return 0
-            fi
-            info "导入镜像到 Docker: ${image_name}"
-            docker load -i "$tar_file"
-            ;;
-        ctr)
-            if ctr -n k8s.io image ls | grep -q "${image_name}"; then
-                info "镜像已存在: ${image_name}"
-                return 0
-            fi
-            info "导入镜像到 containerd (ctr): ${image_name}"
-            ctr -n k8s.io image import "$tar_file"
+            info "构建镜像到 Docker: ${image_name}"
+            docker build -t "$image_name" "$context_dir"
             ;;
         *)
-            warn "无法导入镜像 ${image_name}（无可用运行时）"
+            warn "镜像 ${image_name} 不存在，当前运行时 ${RUNTIME:-未检测到} 不支持自动构建"
+            warn "请手动执行: docker build -t ${image_name} ${context_dir}"
             return 1
             ;;
     esac
-    info "镜像导入成功: ${image_name}"
+
+    info "镜像准备完成: ${image_name}"
     return 0
+}
+
+image_exists() {
+    local image_name="$1"
+
+    case "$RUNTIME" in
+        nerdctl)
+            nerdctl -n k8s.io image inspect "$image_name" &>/dev/null 2>&1
+            ;;
+        docker)
+            docker image inspect "$image_name" &>/dev/null 2>&1
+            ;;
+        ctr)
+            ctr -n k8s.io image ls | grep -q "${image_name}"
+            ;;
+        crictl)
+            crictl images | grep -q "${image_name}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 # ---- 5. 部署 ----
