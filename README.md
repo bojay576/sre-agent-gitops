@@ -80,6 +80,7 @@ sre-agent-gitops/
 ├── apps/
 │   ├── ollama/
 │   │   └── ollama.yaml               # PVC, Deployment, Service
+│   ├── namespace.yaml                 # ai-services 命名空间
 │   ├── mysql/
 │   │   ├── mysql-secret.yaml          # MySQL 密码 Secret
 │   │   ├── mysql-deployment.yaml      # ConfigMap, PVC, Deployment, Service
@@ -271,7 +272,7 @@ curl -s "http://${NODE_IP}:30080" && echo "Gateway OK"
 ### 1. 创建命名空间
 
 ```bash
-kubectl create namespace ai-services
+kubectl apply -f apps/namespace.yaml
 ```
 
 ### 2. 部署 Ollama（可选，用外部 API 则跳过）

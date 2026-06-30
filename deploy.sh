@@ -220,7 +220,7 @@ do_deploy() {
 
     # 5a. 创建 namespace（确保在其他资源之前）
     info "创建命名空间: ${NAMESPACE}"
-    kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+    kubectl apply -f "${SCRIPT_DIR}/apps/namespace.yaml"
 
     # 5b. 创建 Secrets 先
     info "创建 Secrets..."
