@@ -75,3 +75,4 @@ spec:
   ports:
   - port: 11434
     targetPort: 11434
+    nodePort: 31134

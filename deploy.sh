@@ -354,7 +354,7 @@ print_status() {
     echo "🌐 服务端口:"
     echo "   AI Gateway:  NodePort 30080"
     if [ "${NEED_OLLAMA}" = "true" ]; then
-        echo "   Ollama:      NodePort (动态分配)"
+        echo "   Ollama:      NodePort 31134"
     fi
     echo "   MCP Server:  ClusterIP :8080"
     echo "   MySQL:       ClusterIP :3306"

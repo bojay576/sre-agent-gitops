@@ -191,6 +191,7 @@ nerdctl -n k8s.io image ls | grep -E "mcp-hr-server|ai-gateway|sre-agent"
 - 集群需要能访问 **Docker Hub**（拉取 `ollama/ollama`、`mysql:8.0`）
 - 如果用外部 API 模式，需要能访问对应的 API 端点（如 `api.openai.com`）
 - AI Gateway 通过 **NodePort 30080** 暴露，确保节点 IP 可访问
+- Ollama 调试端口固定为 **NodePort 31134**（本地 Ollama 模式）
 
 ### 部署流程图
 
