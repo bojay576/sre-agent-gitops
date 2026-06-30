@@ -79,7 +79,7 @@ sre-agent-gitops/
 ├── deploy.sh                         # 一键部署脚本
 ├── apps/
 │   ├── ollama/
-│   │   └── ollama.yaml               # Namespace, PVC, Deployment, Service
+│   │   └── ollama.yaml               # PVC, Deployment, Service
 │   ├── mysql/
 │   │   ├── mysql-secret.yaml          # MySQL 密码 Secret
 │   │   ├── mysql-deployment.yaml      # ConfigMap, PVC, Deployment, Service
@@ -92,11 +92,16 @@ sre-agent-gitops/
 │       ├── deployment.yaml            # SRE Agent Deployment
 │       └── rbac.yaml                  # ServiceAccount, ClusterRole, ClusterRoleBinding
 ├── src/
+│   ├── ai-gateway/
+│   │   ├── main.go                    # AI Gateway 源码
+│   │   └── Dockerfile                 # Gateway 镜像构建
+│   ├── sre-agent/
+│   │   ├── main.go                    # SRE Agent 源码
+│   │   └── Dockerfile                 # Agent 镜像构建
 │   └── mcp-hr-server/
 │       ├── main.go                    # MCP Server Go 源码
 │       ├── Dockerfile                 # 多阶段构建
-│       ├── go.mod / go.sum            # Go 模块定义
-│       └── mcp-hr-server.tar          # 预构建镜像（可离线导入）
+│       └── go.mod / go.sum            # Go 模块定义
 ├── .gitignore
 └── README.md
 ```
@@ -168,15 +173,8 @@ kubectl apply -f https://openebs.github.io/charts/openebs-operator.yaml
 | **Ollama** | `ollama/ollama:latest` | Docker Hub | 自动拉取（需网络） |
 | **MySQL** | `mysql:8.0` | Docker Hub | 自动拉取（需网络） |
 | **MCP Server** | `mcp-hr-server:v1` | **本仓库源码构建** | `cd src/mcp-hr-server && docker build -t mcp-hr-server:v1 .` |
-| **AI Gateway** | `ai-gateway:v5` | **⚠️ 需自行构建** | 源码不在此仓库，需另行构建或从已有环境导出 |
-| **SRE Agent** | `sre-agent:v1.0` | **⚠️ 需自行构建** | 源码不在此仓库，需另行构建或从已有环境导出 |
-
-> **⚠️ 注意：** `ai-gateway:v5` 和 `sre-agent:v1.0` 的源码不在本仓库中。在新电脑上首次部署时，你需要：
-> - 从其他已有环境导出镜像（`docker save` → `docker load`）
-> - 或从私有镜像仓库拉取
-> - 或自行构建这两个镜像
->
-> `deploy.sh` 会检测镜像是否存在，缺失时会给出提示。
+| **AI Gateway** | `ai-gateway:v5` | **本仓库源码构建** | `cd src/ai-gateway && docker build -t ai-gateway:v5 .` |
+| **SRE Agent** | `sre-agent:v1.0` | **本仓库源码构建** | `cd src/sre-agent && docker build -t sre-agent:v1.0 .` |
 
 快速检查镜像是否就绪：
 ```bash
@@ -203,8 +201,8 @@ nerdctl -n k8s.io image ls | grep -E "mcp-hr-server|ai-gateway|sre-agent"
   ├─ 3. 安装 OpenEBS（或使用已有存储类）
   ├─ 4. 构建/导入本地镜像
   │     ├── mcp-hr-server:v1   ← 本仓库有源码，docker build
-  │     ├── ai-gateway:v5      ← 需从其他环境导出或自行构建
-  │     └── sre-agent:v1.0     ← 需从其他环境导出或自行构建
+  │     ├── ai-gateway:v5      ← 本仓库有源码，docker build
+  │     └── sre-agent:v1.0     ← 本仓库有源码，docker build
   ├─ 5. 运行 ./deploy.sh
   │     ├── 选择 Ollama 或外部 API 模式
   │     ├── 自动部署所有组件
@@ -330,9 +328,9 @@ kubectl apply -f apps/sre-agent/deployment.yaml
 |------|------|------|
 | `ollama/ollama:latest` | Docker Hub | 官方镜像，默认即可 |
 | `mysql:8.0` | Docker Hub | 官方镜像 |
-| `mcp-hr-server:v1` | 本地构建 | 见下方「构建 MCP Server」，提供 tar 包可离线导入 |
-| `ai-gateway:v5` | 自行构建 | 网关应用，需自行构建镜像 |
-| `sre-agent:v1.0` | 自行构建 | SRE Agent，需自行构建镜像 |
+| `mcp-hr-server:v1` | 本地构建 | 见下方「构建本地镜像」 |
+| `ai-gateway:v5` | 本地构建 | 见下方「构建本地镜像」 |
+| `sre-agent:v1.0` | 本地构建 | 见下方「构建本地镜像」 |
 
 ### 使用私有镜像仓库（可选）
 
@@ -388,22 +386,17 @@ curl http://<node-ip>:30080
 | `pods`, `pods/log`, `events` | get, list, watch |
 | `pods` | delete |
 
-## 构建 MCP Server
+## 构建本地镜像
 
 ```bash
 cd src/mcp-hr-server
-
-# 本地编译
-CGO_ENABLED=0 GOOS=linux go build -o mcp-server .
-
-# Docker 构建
 docker build -t mcp-hr-server:v1 .
 
-# 导出 tar（离线导入用）
-docker save mcp-hr-server:v1 -o mcp-hr-server.tar
+cd ../ai-gateway
+docker build -t ai-gateway:v5 .
 
-# 导入到 containerd（k3s 环境）
-nerdctl -n k8s.io load -i mcp-hr-server.tar
+cd ../sre-agent
+docker build -t sre-agent:v1.0 .
 ```
 
 ## 常见问题

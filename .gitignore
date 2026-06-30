@@ -13,6 +13,7 @@ Thumbs.db
 *.tar
 
 # Go build artifacts
+.gocache/
 src/mcp-hr-server/mcp-server
 
 # Kubernetes secrets (sensitive data)
