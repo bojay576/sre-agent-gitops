@@ -58,6 +58,8 @@ chmod +x deploy.sh
 1. **`read_schema`** — 获取数据库所有表名和字段结构，AI 编写 SQL 前自动调用
 2. **`execute_query`** — 执行 SQL 语句（SELECT / INSERT / UPDATE / DELETE 等）
 
+AI Gateway 会通过 `MCP_SERVER_URL` 连接 MCP Server，将这些工具作为 LLM tool/function 暴露给支持工具调用的 Ollama 或 OpenAI 兼容模型。模型返回 tool call 后，Gateway 会执行 MCP 工具并把工具结果回传给模型生成最终回答。
+
 ### 数据流
 
 ```
@@ -127,11 +129,11 @@ sre-agent-gitops/
 |------|---------|---------|
 | **kubectl** | v1.24+ | `brew install kubectl` / [官方文档](https://kubernetes.io/docs/tasks/tools/) |
 | **容器运行时** | — | Docker Desktop / containerd / nerdctl |
-| **Go**（仅构建 MCP Server） | 1.21+ | `brew install go` / [golang.org](https://go.dev/dl/) |
+| **Go**（仅本地编译源码时需要） | 1.25+ | `brew install go` / [golang.org](https://go.dev/dl/) |
 
 可选：
 - **nerdctl** — 用于导入 `.tar` 镜像到 containerd（k3s 环境推荐）
-- **Docker** — 用于构建 MCP Server 镜像
+- **Docker** — 用于构建本地服务镜像
 - **Helm** — 可选，用于安装 OpenEBS
 
 ### Kubernetes 集群
@@ -401,6 +403,7 @@ curl http://<node-ip>:30080
 | `MCP_SERVER_URL` | MCP Server SSE 地址 | `http://mcp-server-service:8080/sse` |
 
 `OLLAMA_URL` 和 `OLLAMA_MODEL` 仍作为兼容变量保留，新配置建议使用 `LLM_API_URL` 和 `LLM_MODEL`。
+如果模型支持 tool/function calling，Gateway 会自动使用 `MCP_SERVER_URL` 中的 MCP 工具完成数据库查询。
 
 ### MCP Server 环境变量
 

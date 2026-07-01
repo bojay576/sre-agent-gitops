@@ -14,9 +14,13 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	mcpclient "github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 const defaultListenAddr = ":3000"
+const maxToolRounds = 4
 
 type config struct {
 	Provider string
@@ -27,8 +31,22 @@ type config struct {
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	Name       string     `json:"name,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
+}
+
+type toolCall struct {
+	ID       string           `json:"id,omitempty"`
+	Type     string           `json:"type,omitempty"`
+	Function toolCallFunction `json:"function"`
+}
+
+type toolCallFunction struct {
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
 }
 
 type chatRequest struct {
@@ -183,68 +201,106 @@ func normalizeMessages(req chatRequest) ([]chatMessage, error) {
 	return req.Messages, nil
 }
 
-func callLLM(ctx context.Context, client *http.Client, cfg config, model string, messages []chatMessage) (string, error) {
+func callLLM(ctx context.Context, httpClient *http.Client, cfg config, model string, messages []chatMessage) (string, error) {
+	tools, err := listMCPTools(ctx, cfg)
+	if err != nil {
+		log.Printf("MCP tools unavailable, continuing without tools: %v", err)
+	}
+
 	switch cfg.Provider {
 	case "openai", "custom":
-		return callOpenAI(ctx, client, cfg, model, messages)
+		return callOpenAI(ctx, httpClient, cfg, model, messages, tools)
 	case "ollama", "":
-		return callOllama(ctx, client, cfg, model, messages)
+		return callOllama(ctx, httpClient, cfg, model, messages, tools)
 	default:
 		return "", fmt.Errorf("unsupported LLM_PROVIDER %q", cfg.Provider)
 	}
 }
 
-func callOllama(ctx context.Context, client *http.Client, cfg config, model string, messages []chatMessage) (string, error) {
-	payload := map[string]interface{}{
-		"model":    model,
-		"messages": messages,
-		"stream":   false,
-	}
+func callOllama(ctx context.Context, httpClient *http.Client, cfg config, model string, messages []chatMessage, tools []mcp.Tool) (string, error) {
+	for round := 0; round < maxToolRounds; round++ {
+		payload := map[string]interface{}{
+			"model":    model,
+			"messages": messages,
+			"stream":   false,
+		}
+		if len(tools) > 0 {
+			payload["tools"] = ollamaTools(tools)
+		}
 
-	var decoded struct {
-		Message  chatMessage `json:"message"`
-		Response string      `json:"response"`
-		Error    string      `json:"error"`
+		var decoded struct {
+			Message  chatMessage `json:"message"`
+			Response string      `json:"response"`
+			Error    string      `json:"error"`
+		}
+		if err := postJSON(ctx, httpClient, cfg, payload, &decoded); err != nil {
+			return "", err
+		}
+		if decoded.Error != "" {
+			return "", errors.New(decoded.Error)
+		}
+		if len(decoded.Message.ToolCalls) == 0 {
+			if decoded.Message.Content != "" {
+				return decoded.Message.Content, nil
+			}
+			return decoded.Response, nil
+		}
+
+		messages = append(messages, decoded.Message)
+		toolMessages, err := executeToolCalls(ctx, cfg, decoded.Message.ToolCalls)
+		if err != nil {
+			return "", err
+		}
+		messages = append(messages, toolMessages...)
 	}
-	if err := postJSON(ctx, client, cfg, payload, &decoded); err != nil {
-		return "", err
-	}
-	if decoded.Error != "" {
-		return "", errors.New(decoded.Error)
-	}
-	if decoded.Message.Content != "" {
-		return decoded.Message.Content, nil
-	}
-	return decoded.Response, nil
+	return "", errors.New("tool call loop exceeded maximum rounds")
 }
 
-func callOpenAI(ctx context.Context, client *http.Client, cfg config, model string, messages []chatMessage) (string, error) {
-	payload := map[string]interface{}{
-		"model":    model,
-		"messages": messages,
-		"stream":   false,
-	}
+func callOpenAI(ctx context.Context, httpClient *http.Client, cfg config, model string, messages []chatMessage, tools []mcp.Tool) (string, error) {
+	for round := 0; round < maxToolRounds; round++ {
+		payload := map[string]interface{}{
+			"model":    model,
+			"messages": messages,
+			"stream":   false,
+		}
+		if len(tools) > 0 {
+			payload["tools"] = openAITools(tools)
+			payload["tool_choice"] = "auto"
+		}
 
-	var decoded struct {
-		Choices []struct {
-			Message chatMessage `json:"message"`
-			Text    string      `json:"text"`
-		} `json:"choices"`
-		Error interface{} `json:"error"`
+		var decoded struct {
+			Choices []struct {
+				Message chatMessage `json:"message"`
+				Text    string      `json:"text"`
+			} `json:"choices"`
+			Error interface{} `json:"error"`
+		}
+		if err := postJSON(ctx, httpClient, cfg, payload, &decoded); err != nil {
+			return "", err
+		}
+		if decoded.Error != nil {
+			return "", fmt.Errorf("provider returned error: %v", decoded.Error)
+		}
+		if len(decoded.Choices) == 0 {
+			return "", errors.New("provider returned no choices")
+		}
+
+		message := decoded.Choices[0].Message
+		if len(message.ToolCalls) == 0 {
+			if message.Content != "" {
+				return message.Content, nil
+			}
+			return decoded.Choices[0].Text, nil
+		}
+
+		messages = append(messages, message)
+		toolMessages, err := executeToolCalls(ctx, cfg, message.ToolCalls)
+		if err != nil {
+			return "", err
+		}
+		messages = append(messages, toolMessages...)
 	}
-	if err := postJSON(ctx, client, cfg, payload, &decoded); err != nil {
-		return "", err
-	}
-	if decoded.Error != nil {
-		return "", fmt.Errorf("provider returned error: %v", decoded.Error)
-	}
-	if len(decoded.Choices) == 0 {
-		return "", errors.New("provider returned no choices")
-	}
-	if decoded.Choices[0].Message.Content != "" {
-		return decoded.Choices[0].Message.Content, nil
-	}
-	return decoded.Choices[0].Text, nil
+	return "", errors.New("tool call loop exceeded maximum rounds")
 }
 
 func postJSON(ctx context.Context, client *http.Client, cfg config, payload interface{}, target interface{}) error {
@@ -279,6 +335,135 @@ func postJSON(ctx context.Context, client *http.Client, cfg config, payload inte
 		return fmt.Errorf("invalid provider response: %w", err)
 	}
 	return nil
+}
+
+func listMCPTools(ctx context.Context, cfg config) ([]mcp.Tool, error) {
+	c, err := newMCPClient(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+
+	result, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return result.Tools, nil
+}
+
+func executeToolCalls(ctx context.Context, cfg config, calls []toolCall) ([]chatMessage, error) {
+	c, err := newMCPClient(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+
+	messages := make([]chatMessage, 0, len(calls))
+	for _, call := range calls {
+		args, err := decodeToolArguments(call.Function.Arguments)
+		if err != nil {
+			return nil, fmt.Errorf("decode tool arguments for %s: %w", call.Function.Name, err)
+		}
+
+		result, err := c.CallTool(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name:      call.Function.Name,
+				Arguments: args,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("call MCP tool %s: %w", call.Function.Name, err)
+		}
+
+		messages = append(messages, chatMessage{
+			Role:       "tool",
+			Name:       call.Function.Name,
+			ToolCallID: call.ID,
+			Content:    toolResultText(result),
+		})
+	}
+	return messages, nil
+}
+
+func decodeToolArguments(raw json.RawMessage) (map[string]interface{}, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return map[string]interface{}{}, nil
+	}
+
+	var args map[string]interface{}
+	if err := json.Unmarshal(raw, &args); err == nil {
+		return args, nil
+	}
+
+	var encoded string
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(encoded) == "" {
+		return map[string]interface{}{}, nil
+	}
+	if err := json.Unmarshal([]byte(encoded), &args); err != nil {
+		return nil, err
+	}
+	return args, nil
+}
+
+func newMCPClient(ctx context.Context, cfg config) (*mcpclient.Client, error) {
+	c, err := mcpclient.NewSSEMCPClient(cfg.MCPURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.Start(ctx); err != nil {
+		c.Close()
+		return nil, err
+	}
+
+	initReq := mcp.InitializeRequest{}
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = mcp.Implementation{Name: "ai-gateway", Version: "1.0.0"}
+	initReq.Params.Capabilities = mcp.ClientCapabilities{}
+	if _, err := c.Initialize(ctx, initReq); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
+func toolResultText(result *mcp.CallToolResult) string {
+	parts := make([]string, 0, len(result.Content))
+	for _, content := range result.Content {
+		parts = append(parts, mcp.GetTextFromContent(content))
+	}
+	if result.StructuredContent != nil {
+		data, err := json.Marshal(result.StructuredContent)
+		if err == nil {
+			parts = append(parts, string(data))
+		}
+	}
+	text := strings.TrimSpace(strings.Join(parts, "\n"))
+	if text == "" && result.IsError {
+		return "tool returned an error without details"
+	}
+	return text
+}
+
+func openAITools(tools []mcp.Tool) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, map[string]interface{}{
+			"type": "function",
+			"function": map[string]interface{}{
+				"name":        tool.Name,
+				"description": tool.Description,
+				"parameters":  tool.InputSchema,
+			},
+		})
+	}
+	return out
+}
+
+func ollamaTools(tools []mcp.Tool) []map[string]interface{} {
+	return openAITools(tools)
 }
 
 func makeOpenAIResponse(model string, message chatMessage) openAIResponse {
