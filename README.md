@@ -164,6 +164,7 @@ kubectl apply -f https://openebs.github.io/charts/openebs-operator.yaml
 ```
 
 如果你的集群已有其他存储类（如 `local-path`、`gp2`、`managed-csi` 等），部署时选择使用已有存储类即可。
+`deploy.sh` 会在应用清单时把 PVC 中的 `openebs-hostpath` 替换为你选择的 StorageClass；如果手动部署，请先编辑 `apps/ollama/ollama.yaml` 和 `apps/mysql/mysql-deployment.yaml` 中的 `storageClassName`。
 
 ### 镜像获取
 

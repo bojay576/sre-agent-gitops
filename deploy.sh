@@ -19,6 +19,16 @@ err()   { echo -e "${RED}[ERR]${NC}   $*"; }
 step()  { echo -e "\n${CYAN}${BOLD}==> $*${NC}\n"; }
 title() { echo -e "${BOLD}$*${NC}"; }
 
+apply_manifest() {
+    local manifest="$1"
+
+    if [ -n "${STORAGE_CLASS:-}" ]; then
+        sed "s|storageClassName: openebs-hostpath|storageClassName: ${STORAGE_CLASS}|g" "$manifest" | kubectl apply -f -
+    else
+        kubectl apply -f "$manifest"
+    fi
+}
+
 # ---- 1. 前置检查 ----
 check_prerequisites() {
     step "检查前置条件"
@@ -80,7 +90,6 @@ ensure_storage() {
             read -r -p "  输入已有 StorageClass 名称: " alt_sc
             if kubectl get storageclass "$alt_sc" &>/dev/null; then
                 info "使用已有 StorageClass: $alt_sc"
-                # 替换所有 YAML 中的 storageClassName
                 export STORAGE_CLASS="$alt_sc"
             else
                 err "StorageClass '$alt_sc' 不存在"
@@ -247,7 +256,7 @@ do_deploy() {
     # 5c. 部署 Ollama（仅在 ollama 模式下）
     if [ "${NEED_OLLAMA}" = "true" ]; then
         info "部署 Ollama（使用 Docker Hub 官方镜像）..."
-        kubectl apply -f "${SCRIPT_DIR}/apps/ollama/ollama.yaml"
+        apply_manifest "${SCRIPT_DIR}/apps/ollama/ollama.yaml"
 
         # 提示：如果使用了私有仓库镜像，需自行创建 pull secret
         # 编辑 apps/ollama/ollama.yaml 取消 imagePullSecrets 注释并替换镜像地址
@@ -255,7 +264,7 @@ do_deploy() {
 
     # 5d. 部署 MySQL
     info "部署 MySQL..."
-    kubectl apply -f "${SCRIPT_DIR}/apps/mysql/mysql-deployment.yaml"
+    apply_manifest "${SCRIPT_DIR}/apps/mysql/mysql-deployment.yaml"
 
     # 5e. 部署 MCP Server
     info "部署 MCP Server..."
