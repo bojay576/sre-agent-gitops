@@ -49,9 +49,9 @@ chmod +x deploy.sh
 |------|------|------|------|
 | **Ollama** | 本地 LLM 推理（可选，可用外部 API 替代） | 11434 | `ollama/ollama:latest` |
 | **MySQL** | 关系数据库，存储 HR 示例数据 | 3306 | `mysql:8.0` |
-| **MCP Server** | Go 实现的 Model Context Protocol 服务，将数据库操作暴露为 AI 工具 | 8080 | `mcp-hr-server:v1` |
-| **AI Gateway** | AI 网关，连接 LLM 与 MCP 工具链 | 30080 | `ai-gateway:v5` |
-| **SRE Agent** | Kubernetes 运维代理，具备 Pod 查看/删除等权限 | - | `sre-agent:v1.0` |
+| **MCP Server** | Go 实现的 Model Context Protocol 服务，将数据库操作暴露为 AI 工具 | 8080 | `ghcr.io/bojay576/mcp-hr-server:latest` |
+| **AI Gateway** | AI 网关，连接 LLM 与 MCP 工具链 | 30080 | `ghcr.io/bojay576/ai-gateway:latest` |
+| **SRE Agent** | Kubernetes 运维代理，具备 Pod 查看/删除等权限 | - | `ghcr.io/bojay576/sre-agent:latest` |
 
 ### MCP 工具
 
@@ -132,7 +132,7 @@ sre-agent-gitops/
 | **Go**（仅本地编译源码时需要） | 1.25+ | `brew install go` / [golang.org](https://go.dev/dl/) |
 
 可选：
-- **nerdctl** — 用于导入 `.tar` 镜像到 containerd（k3s 环境推荐）
+- **nerdctl** — 仅在需要从本地源码构建并导入 k3s/containerd 镜像时使用
 - **Docker** — 用于构建本地服务镜像
 - **Helm** — 可选，用于安装 OpenEBS
 
@@ -170,15 +170,25 @@ kubectl apply -f https://openebs.github.io/charts/openebs-operator.yaml
 
 ### 镜像获取
 
-这是新电脑部署最关键的环节。五个组件镜像的来源：
+默认部署会直接拉取已发布镜像，新电脑无需预先构建本仓库服务镜像：
 
 | 组件 | 镜像 | 来源 | 新电脑上如何获取 |
 |------|------|------|-----------------|
 | **Ollama** | `ollama/ollama:latest` | Docker Hub | 自动拉取（需网络） |
 | **MySQL** | `mysql:8.0` | Docker Hub | 自动拉取（需网络） |
-| **MCP Server** | `mcp-hr-server:v1` | **本仓库源码构建** | `cd src/mcp-hr-server && docker build -t mcp-hr-server:v1 .` |
-| **AI Gateway** | `ai-gateway:v5` | **本仓库源码构建** | `cd src/ai-gateway && docker build -t ai-gateway:v5 .` |
-| **SRE Agent** | `sre-agent:v1.0` | **本仓库源码构建** | `cd src/sre-agent && docker build -t sre-agent:v1.0 .` |
+| **MCP Server** | `ghcr.io/bojay576/mcp-hr-server:latest` | GHCR | 自动拉取（需网络） |
+| **AI Gateway** | `ghcr.io/bojay576/ai-gateway:latest` | GHCR | 自动拉取（需网络） |
+| **SRE Agent** | `ghcr.io/bojay576/sre-agent:latest` | GHCR | 自动拉取（需网络） |
+
+如果要部署当前工作区源码而不是 GHCR 镜像，可启用本地镜像模式：
+
+```bash
+USE_LOCAL_IMAGES=true \
+MCP_IMAGE=mcp-hr-server:v1 \
+GATEWAY_IMAGE=ai-gateway:v5 \
+SRE_AGENT_IMAGE=sre-agent:v1.0 \
+./deploy.sh
+```
 
 快速检查镜像是否就绪：
 ```bash
@@ -189,7 +199,7 @@ docker images | grep -E "mcp-hr-server|ai-gateway|sre-agent"
 nerdctl -n k8s.io image ls | grep -E "mcp-hr-server|ai-gateway|sre-agent"
 ```
 
-如果使用 Kind 或 minikube，`deploy.sh` 在 Docker 构建完成后会自动把本地镜像加载到当前集群节点：
+如果使用 Kind 或 minikube 并设置了 `USE_LOCAL_IMAGES=true`，`deploy.sh` 在 Docker 构建完成后会自动把本地镜像加载到当前集群节点：
 
 - Kind context（如 `kind-kind`）：执行 `kind load docker-image`
 - minikube context：执行 `minikube image load`
@@ -211,10 +221,7 @@ nerdctl -n k8s.io image ls | grep -E "mcp-hr-server|ai-gateway|sre-agent"
   ├─ 1. 安装 kubectl + Docker/k3s
   ├─ 2. 启动 Kubernetes 集群
   ├─ 3. 安装 OpenEBS（或使用已有存储类）
-  ├─ 4. 构建/导入本地镜像
-  │     ├── mcp-hr-server:v1   ← 本仓库有源码，docker build
-  │     ├── ai-gateway:v5      ← 本仓库有源码，docker build
-  │     └── sre-agent:v1.0     ← 本仓库有源码，docker build
+  ├─ 4. 拉取 GHCR/Docker Hub 镜像（默认自动完成）
   ├─ 5. 运行 ./deploy.sh
   │     ├── 选择 Ollama 或外部 API 模式
   │     ├── 自动部署所有组件
@@ -340,9 +347,9 @@ kubectl apply -f apps/sre-agent/deployment.yaml
 |------|------|------|
 | `ollama/ollama:latest` | Docker Hub | 官方镜像，默认即可 |
 | `mysql:8.0` | Docker Hub | 官方镜像 |
-| `mcp-hr-server:v1` | 本地构建 | 见下方「构建本地镜像」 |
-| `ai-gateway:v5` | 本地构建 | 见下方「构建本地镜像」 |
-| `sre-agent:v1.0` | 本地构建 | 见下方「构建本地镜像」 |
+| `ghcr.io/bojay576/mcp-hr-server:latest` | GHCR | 默认部署镜像，支持 `amd64/arm64` |
+| `ghcr.io/bojay576/ai-gateway:latest` | GHCR | 默认部署镜像，支持 `amd64/arm64` |
+| `ghcr.io/bojay576/sre-agent:latest` | GHCR | 默认部署镜像，支持 `amd64/arm64` |
 
 ## CI/CD
 
@@ -350,6 +357,7 @@ kubectl apply -f apps/sre-agent/deployment.yaml
 
 - Pull Request：对 `src/ai-gateway`、`src/mcp-hr-server`、`src/sre-agent` 执行 `go vet`、`go test`，并构建 Docker 镜像但不推送
 - Push 到 `main`：构建并推送镜像到 GHCR，标签包含 `latest` 和 `sha-<commit>`
+- 镜像发布为 `linux/amd64` 和 `linux/arm64` 多架构 manifest，兼容常见 x86 服务器和 Apple Silicon 本地集群
 
 默认发布路径：
 
@@ -419,6 +427,8 @@ curl http://<node-ip>:30080
 | `pods` | delete |
 
 ## 构建本地镜像
+
+仅在要部署当前工作区源码，或目标集群无法访问 GHCR 时需要本地构建。
 
 ```bash
 cd src/mcp-hr-server

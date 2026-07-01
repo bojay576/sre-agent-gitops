@@ -32,8 +32,8 @@ spec:
     spec:
       containers:
       - name: server
-        image: mcp-hr-server:v1
-        imagePullPolicy: IfNotPresent # 使用本地导入的镜像，不尝试去 Docker Hub 拉取
+        image: ghcr.io/bojay576/mcp-hr-server:latest
+        imagePullPolicy: IfNotPresent
         env:
         - name: DSN
           valueFrom:

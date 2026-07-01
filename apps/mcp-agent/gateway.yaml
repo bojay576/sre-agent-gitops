@@ -33,9 +33,8 @@ spec:
     spec:
       containers:
       - name: gateway
-        #改成v5，v5版本更新了大模型url和名称解耦
-        image: ai-gateway:v5   
-        imagePullPolicy: IfNotPresent # 同样使用本地镜像
+        image: ghcr.io/bojay576/ai-gateway:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000
         resources:

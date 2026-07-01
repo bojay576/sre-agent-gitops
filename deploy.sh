@@ -11,6 +11,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NAMESPACE="ai-services"
 KUBE_CONTEXT=""
+IMAGE_REGISTRY="${IMAGE_REGISTRY:-ghcr.io/bojay576}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
+USE_LOCAL_IMAGES="${USE_LOCAL_IMAGES:-false}"
+MCP_IMAGE="${MCP_IMAGE:-${IMAGE_REGISTRY}/mcp-hr-server:${IMAGE_TAG}}"
+GATEWAY_IMAGE="${GATEWAY_IMAGE:-${IMAGE_REGISTRY}/ai-gateway:${IMAGE_TAG}}"
+SRE_AGENT_IMAGE="${SRE_AGENT_IMAGE:-${IMAGE_REGISTRY}/sre-agent:${IMAGE_TAG}}"
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 BOLD='\033[1m'
 
@@ -23,11 +29,18 @@ title() { echo -e "${BOLD}$*${NC}"; }
 apply_manifest() {
     local manifest="$1"
 
-    if [ -n "${STORAGE_CLASS:-}" ]; then
-        sed "s|storageClassName: openebs-hostpath|storageClassName: ${STORAGE_CLASS}|g" "$manifest" | kubectl apply -f -
-    else
-        kubectl apply -f "$manifest"
-    fi
+    render_manifest "$manifest" | kubectl apply -f -
+}
+
+render_manifest() {
+    local manifest="$1"
+    local storage_class="${STORAGE_CLASS:-openebs-hostpath}"
+
+    sed -e "s|storageClassName: openebs-hostpath|storageClassName: ${storage_class}|g" \
+        -e "s|image: ghcr.io/bojay576/mcp-hr-server:latest|image: ${MCP_IMAGE}|g" \
+        -e "s|image: ghcr.io/bojay576/ai-gateway:latest|image: ${GATEWAY_IMAGE}|g" \
+        -e "s|image: ghcr.io/bojay576/sre-agent:latest|image: ${SRE_AGENT_IMAGE}|g" \
+        "$manifest"
 }
 
 # ---- 1. 前置检查 ----
@@ -76,7 +89,17 @@ ensure_storage() {
         return
     fi
 
+    local default_sc
+    default_sc="$(kubectl get storageclass -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null || true)"
+    default_sc="${default_sc%% *}"
+    if [ -n "$default_sc" ]; then
+        info "使用集群默认 StorageClass: ${default_sc}"
+        export STORAGE_CLASS="$default_sc"
+        return
+    fi
+
     warn "未找到 'openebs-hostpath' StorageClass"
+    warn "也未检测到默认 StorageClass"
     echo "  PVC 需要存储类才能创建。选项:"
     echo "    [1] 安装 OpenEBS (适用于大多数集群)"
     echo "    [2] 使用集群已有的其他 StorageClass"
@@ -161,12 +184,23 @@ choose_mode() {
 }
 
 # ---- 4. 准备镜像 ----
-import_images() {
-    step "准备本地容器镜像"
+prepare_images() {
+    step "准备容器镜像"
 
-    ensure_local_image "mcp-hr-server:v1" "${SCRIPT_DIR}/src/mcp-hr-server"
-    ensure_local_image "ai-gateway:v5" "${SCRIPT_DIR}/src/ai-gateway"
-    ensure_local_image "sre-agent:v1.0" "${SCRIPT_DIR}/src/sre-agent"
+    info "MCP Server 镜像: ${MCP_IMAGE}"
+    info "AI Gateway 镜像: ${GATEWAY_IMAGE}"
+    info "SRE Agent 镜像: ${SRE_AGENT_IMAGE}"
+
+    if [ "${USE_LOCAL_IMAGES}" != "true" ]; then
+        info "使用可拉取镜像；如需从当前源码构建本地镜像，请设置 USE_LOCAL_IMAGES=true"
+        return 0
+    fi
+
+    warn "USE_LOCAL_IMAGES=true 仅适合 minikube/kind 等可加载本地镜像的开发集群"
+
+    ensure_local_image "${MCP_IMAGE}" "${SCRIPT_DIR}/src/mcp-hr-server"
+    ensure_local_image "${GATEWAY_IMAGE}" "${SCRIPT_DIR}/src/ai-gateway"
+    ensure_local_image "${SRE_AGENT_IMAGE}" "${SCRIPT_DIR}/src/sre-agent"
 
     return 0
 }
@@ -296,7 +330,7 @@ do_deploy() {
 
     # 5e. 部署 MCP Server
     info "部署 MCP Server..."
-    kubectl apply -f "${SCRIPT_DIR}/apps/mcp-agent/server.yaml"
+    apply_manifest "${SCRIPT_DIR}/apps/mcp-agent/server.yaml"
 
     # 5f. 部署 AI Gateway
     info "部署 AI Gateway..."
@@ -305,18 +339,17 @@ do_deploy() {
     local gateway_yaml="${SCRIPT_DIR}/apps/mcp-agent/gateway.yaml"
     if [ -n "${LLM_API_URL:-}" ] && [ -n "${LLM_MODEL:-}" ]; then
         # 生成带配置的临时 manifest
-        sed -e "s|value: \"ollama\"|value: \"${LLM_PROVIDER}\"|g" \
+        render_manifest "$gateway_yaml" | sed -e "s|value: \"ollama\"|value: \"${LLM_PROVIDER}\"|g" \
             -e "s|value: \"http://ollama-service:11434/api/chat\"|value: \"${LLM_API_URL}\"|g" \
-            -e "s|value: \"qwen3:4b\"|value: \"${LLM_MODEL}\"|g" \
-            "$gateway_yaml" | kubectl apply -f -
+            -e "s|value: \"qwen3:4b\"|value: \"${LLM_MODEL}\"|g" | kubectl apply -f -
     else
-        kubectl apply -f "$gateway_yaml"
+        apply_manifest "$gateway_yaml"
     fi
 
     # 5g. 部署 SRE Agent
     info "部署 SRE Agent..."
     kubectl apply -f "${SCRIPT_DIR}/apps/sre-agent/rbac.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/apps/sre-agent/deployment.yaml"
+    apply_manifest "${SCRIPT_DIR}/apps/sre-agent/deployment.yaml"
 
     info "所有清单已提交"
 }
@@ -423,7 +456,7 @@ main() {
     check_prerequisites
     ensure_storage
     choose_mode
-    import_images
+    prepare_images
     do_deploy
     wait_ready
     pull_model
