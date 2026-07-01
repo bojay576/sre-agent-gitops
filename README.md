@@ -187,6 +187,13 @@ docker images | grep -E "mcp-hr-server|ai-gateway|sre-agent"
 nerdctl -n k8s.io image ls | grep -E "mcp-hr-server|ai-gateway|sre-agent"
 ```
 
+如果使用 Kind 或 minikube，`deploy.sh` 在 Docker 构建完成后会自动把本地镜像加载到当前集群节点：
+
+- Kind context（如 `kind-kind`）：执行 `kind load docker-image`
+- minikube context：执行 `minikube image load`
+
+如果缺少对应 CLI，脚本会输出需要手动执行的加载命令。
+
 ### 网络
 
 - 集群需要能访问 **Docker Hub**（拉取 `ollama/ollama`、`mysql:8.0`）

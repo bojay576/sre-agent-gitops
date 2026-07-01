@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NAMESPACE="ai-services"
+KUBE_CONTEXT=""
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 BOLD='\033[1m'
 
@@ -45,7 +46,8 @@ check_prerequisites() {
         err "无法连接 Kubernetes 集群，请检查 kubeconfig"
         exit 1
     fi
-    info "集群连接正常: $(kubectl config current-context)"
+    KUBE_CONTEXT="$(kubectl config current-context)"
+    info "集群连接正常: ${KUBE_CONTEXT}"
 
     # 容器运行时 (用于导入镜像)
     RUNTIME=""
@@ -191,6 +193,7 @@ ensure_local_image() {
         docker)
             info "构建镜像到 Docker: ${image_name}"
             docker build -t "$image_name" "$context_dir"
+            load_image_into_cluster "$image_name"
             ;;
         *)
             warn "镜像 ${image_name} 不存在，当前运行时 ${RUNTIME:-未检测到} 不支持自动构建"
@@ -201,6 +204,31 @@ ensure_local_image() {
 
     info "镜像准备完成: ${image_name}"
     return 0
+}
+
+load_image_into_cluster() {
+    local image_name="$1"
+    local context="${KUBE_CONTEXT:-$(kubectl config current-context 2>/dev/null || true)}"
+
+    case "$context" in
+        kind-*)
+            if command -v kind &>/dev/null; then
+                local cluster_name="${context#kind-}"
+                info "加载镜像到 Kind 集群 ${cluster_name}: ${image_name}"
+                kind load docker-image "$image_name" --name "$cluster_name"
+            else
+                warn "当前 context 是 ${context}，但未找到 kind CLI；请手动执行: kind load docker-image ${image_name} --name ${context#kind-}"
+            fi
+            ;;
+        minikube|*-minikube|minikube-*)
+            if command -v minikube &>/dev/null; then
+                info "加载镜像到 minikube: ${image_name}"
+                minikube image load "$image_name"
+            else
+                warn "当前 context 是 ${context}，但未找到 minikube CLI；请手动执行: minikube image load ${image_name}"
+            fi
+            ;;
+    esac
 }
 
 image_exists() {
