@@ -13,7 +13,7 @@
 指定监控命名空间：
 
 ```bash
-WATCH_NAMESPACE=mcp-services ./deploy.sh
+WATCH_NAMESPACE=production ./deploy.sh
 ```
 
 常用环境变量：
