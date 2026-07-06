@@ -1,4 +1,4 @@
-name: Build and Publish Images
+name: Build and Publish SRE Agent
 
 on:
   push:
@@ -20,13 +20,6 @@ jobs:
   go-test:
     name: Go test
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        service:
-          - src/ai-gateway
-          - src/mcp-hr-server
-          - src/sre-agent
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,30 +27,20 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: ${{ matrix.service }}/go.mod
+          go-version-file: src/sre-agent/go.mod
 
       - name: Go vet
-        working-directory: ${{ matrix.service }}
+        working-directory: src/sre-agent
         run: go vet ./...
 
       - name: Go test
-        working-directory: ${{ matrix.service }}
+        working-directory: src/sre-agent
         run: go test ./...
 
   build-and-push:
-    name: Build images
+    name: Build image
     runs-on: ubuntu-latest
     needs: go-test
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - image: ai-gateway
-            context: src/ai-gateway
-          - image: mcp-hr-server
-            context: src/mcp-hr-server
-          - image: sre-agent
-            context: src/sre-agent
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -80,7 +63,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/sre-agent
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-
@@ -88,7 +71,7 @@ jobs:
       - name: Build and optionally push
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: src/sre-agent
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}

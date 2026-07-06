@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: sre-agent
-  namespace: default
+  namespace: sre-system
 spec:
   replicas: 1
   selector:
@@ -18,6 +18,11 @@ spec:
       - name: agent
         image: ghcr.io/bojay576/sre-agent:latest
         imagePullPolicy: IfNotPresent
+        env:
+        - name: WATCH_NAMESPACE
+          value: "default"
+        - name: POLL_INTERVAL_SECONDS
+          value: "30"
         resources:
           requests:
             cpu: "100m"

@@ -15,7 +15,7 @@ Thumbs.db
 # Go build artifacts
 .gocache/
 .gomodcache/
-src/mcp-hr-server/mcp-server
+src/sre-agent/sre-agent
 
 # Kubernetes secrets (sensitive data)
 *.secret.yaml

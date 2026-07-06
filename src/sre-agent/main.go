@@ -72,7 +72,7 @@ func loadConfig() (config, error) {
 		return config{}, fmt.Errorf("read service account token: %w", err)
 	}
 
-	namespace := envOrDefault("WATCH_NAMESPACE", "ai-services")
+	namespace := envOrDefault("WATCH_NAMESPACE", "default")
 	intervalSeconds, err := strconv.Atoi(envOrDefault("POLL_INTERVAL_SECONDS", "30"))
 	if err != nil || intervalSeconds < 5 {
 		intervalSeconds = 30
