@@ -39,12 +39,21 @@
 ## 快速开始
 
 ```bash
-# 默认部署
+# 交互式部署（会提示选择 LLM 模式）
 ./deploy.sh
 
 # 指定监控命名空间
 WATCH_NAMESPACE=production ./deploy.sh
 ```
+
+部署过程中会提示选择 LLM 模式：
+- **传统模式** — 仅巡检，不接入 AI
+- **本地 Ollama** — 使用本地大模型（如 qwen2.5:7b），无需 API Key
+- **云端 API** — 使用 OpenAI 兼容 API，需提供 URL 和 Key
+
+随后可配置**自动自愈**：根据 LLM 分析结果自动删除重建故障 Pod。
+
+> 由于脚本包含交互式输入，如果通过 `! ./deploy.sh` 运行，提示会在当前会话中显示。
 
 查看日志：
 
