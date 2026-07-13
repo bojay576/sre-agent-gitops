@@ -1,0 +1,20 @@
+# 模拟 Init 容器失败状态 Pod
+# 原因：Init 容器执行失败，主容器永远不会启动
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fault-init-fail
+  namespace: default
+  labels:
+    app: sre-agent-test
+    fault-type: init-fail
+spec:
+  initContainers:
+  - name: init-setup
+    image: busybox:latest
+    command: ["sh", "-c", "echo 'Init failed'; exit 1"]  # Init 容器失败
+  containers:
+  - name: app
+    image: nginx:alpine
+    command: ["sleep", "3600"]
+  restartPolicy: Always

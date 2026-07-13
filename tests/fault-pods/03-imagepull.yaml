@@ -1,0 +1,15 @@
+# 模拟 ImagePullBackOff 状态 Pod
+# 原因：镜像名称不存在，拉取失败
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fault-imagepull
+  namespace: default
+  labels:
+    app: sre-agent-test
+    fault-type: imagepull
+spec:
+  containers:
+  - name: app
+    image: registry.example.com/nonexistent/image:latest  # 不存在的镜像
+  restartPolicy: Always

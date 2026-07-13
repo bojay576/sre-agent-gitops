@@ -1,0 +1,18 @@
+# 模拟 Pending 状态 Pod
+# 原因：请求了集群无法满足的资源（无限大 CPU），Pod 将一直卡在 Pending
+apiVersion: v1
+kind: Pod
+metadata:
+  name: fault-pending
+  namespace: default
+  labels:
+    app: sre-agent-test
+    fault-type: pending
+spec:
+  containers:
+  - name: app
+    image: nginx:alpine
+    resources:
+      requests:
+        cpu: "9999"  # 远超集群容量，导致 Pending
+        memory: "9999Gi"
