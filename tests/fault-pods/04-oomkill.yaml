@@ -1,5 +1,5 @@
 # 模拟 OOMKilled 状态 Pod
-# 原因：内存限制极低，容器一启动就被 OOM Kill，持续重启
+# 原因：通过 /dev/shm（tmpfs，占用 RAM）分配大内存触发 OOM
 apiVersion: v1
 kind: Pod
 metadata:
@@ -11,12 +11,11 @@ metadata:
 spec:
   containers:
   - name: app
-    image: polinux/stress:latest
-    command: ["stress"]
-    args: ["--vm", "1", "--vm-bytes", "256M", "--vm-hang", "1"]
+    image: docker.io/rancher/mirrored-library-busybox:1.37.0
+    command: ["sh", "-c", "dd if=/dev/zero of=/dev/shm/test bs=1M count=300 2>/dev/null; sleep 10"]
     resources:
       limits:
-        memory: "64Mi"    # 内存限制 64MB，但 stress 要 256MB → OOM
+        memory: "64Mi"      # 限制 64MB，但试图分配 300MB → OOM
       requests:
         memory: "32Mi"
   restartPolicy: Always

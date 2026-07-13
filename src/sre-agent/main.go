@@ -70,19 +70,36 @@ func main() {
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
+	// LLM 分析缓存 key=faultKey → lastAnalysisTime
+	llmCache := make(map[string]time.Time)
+	llmCacheInterval, _ := time.ParseDuration(
+		envOrDefault("LLM_CACHE_INTERVAL", "5m"),
+	)
+
+	llmTimeout := 60 * time.Second
+
 	for {
 		faults := checkPods(context.Background(), client, cfg)
 
 		// 发现故障且 LLM 启用 → 调用大模型分析
 		if len(faults) > 0 && llm.Provider != "" {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			analysis, err := analyzeFaults(ctx, llm, faults)
-			cancel()
+			// 生成指纹，检查是否刚分析过
+			fingerprint := faultFingerprint(faults, llmCacheInterval)
+			now := time.Now()
 
-			if err != nil {
-				log.Printf("LLM analysis failed: %v", err)
-			} else if analysis != nil {
-				remedy.executeActions(context.Background(), analysis)
+			if last, ok := llmCache[fingerprint]; ok && now.Sub(last) < llmCacheInterval {
+				log.Printf("LLM skip: same faults analyzed %v ago (cache=%v)", now.Sub(last).Round(time.Second), llmCacheInterval)
+			} else {
+				ctx, cancel := context.WithTimeout(context.Background(), llmTimeout)
+				analysis, err := analyzeFaults(ctx, llm, faults)
+				cancel()
+
+				if err != nil {
+					log.Printf("LLM analysis failed: %v", err)
+				} else if analysis != nil {
+					remedy.executeActions(context.Background(), analysis)
+				}
+				llmCache[fingerprint] = now
 			}
 		}
 
@@ -225,3 +242,27 @@ func envOrDefault(key, fallback string) string {
 	}
 	return fallback
 }
+
+// faultFingerprint 生成故障列表的指纹用于 LLM 缓存去重
+func faultFingerprint(faults []PodFault, cacheInterval time.Duration) string {
+	// 只考虑最近的故障（避免缓存过长导致漏掉新故障）
+	if cacheInterval > 30*time.Minute {
+		cacheInterval = 5 * time.Minute
+	}
+	var b strings.Builder
+	for _, f := range faults {
+		b.WriteString(f.Namespace)
+		b.WriteString("/")
+		b.WriteString(f.Name)
+		b.WriteString("=")
+		b.WriteString(f.Phase)
+		for _, issue := range f.Issues {
+			b.WriteString(";")
+			b.WriteString(issue.Container)
+			b.WriteString(":")
+			b.WriteString(strconv.Itoa(issue.RestartCount))
+		}
+	}
+	return b.String()
+}
+
