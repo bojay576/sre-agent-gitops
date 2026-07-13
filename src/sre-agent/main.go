@@ -54,14 +54,38 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("SRE Agent started namespace=%s poll_interval=%s api_server=%s", cfg.Namespace, cfg.PollInterval, cfg.APIServer)
+	// 加载 LLM 配置（不启用不影响运行）
+	llm := loadLLMConfig()
+	if llm.Provider != "" {
+		log.Printf("LLM enabled provider=%s model=%s url=%s", llm.Provider, llm.Model, llm.APIURL)
+	} else {
+		log.Printf("LLM disabled (set LLM_PROVIDER to enable)")
+	}
+
+	remedy := newRemedier(client, cfg)
+
+	log.Printf("SRE Agent started namespace=%s poll_interval=%s api_server=%s",
+		cfg.Namespace, cfg.PollInterval, cfg.APIServer)
+
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
 	for {
-		if err := checkPods(context.Background(), client, cfg); err != nil {
-			log.Printf("pod check failed: %v", err)
+		faults := checkPods(context.Background(), client, cfg)
+
+		// 发现故障且 LLM 启用 → 调用大模型分析
+		if len(faults) > 0 && llm.Provider != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			analysis, err := analyzeFaults(ctx, llm, faults)
+			cancel()
+
+			if err != nil {
+				log.Printf("LLM analysis failed: %v", err)
+			} else if analysis != nil {
+				remedy.executeActions(context.Background(), analysis)
+			}
 		}
+
 		<-ticker.C
 	}
 }
@@ -116,51 +140,83 @@ func kubernetesClient(cfg config) (*http.Client, error) {
 	}, nil
 }
 
-func checkPods(ctx context.Context, client *http.Client, cfg config) error {
+// checkPods 检查 Pod 状态，返回发现的故障列表（不再直接输出日志）
+func checkPods(ctx context.Context, client *http.Client, cfg config) []PodFault {
 	url := cfg.APIServer + "/api/v1/namespaces/" + cfg.Namespace + "/pods"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		log.Printf("pod check: create request failed: %v", err)
+		return nil
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.Token)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		log.Printf("pod check: request failed: %v", err)
+		return nil
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return err
+		log.Printf("pod check: read failed: %v", err)
+		return nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("kubernetes API returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		log.Printf("pod check: API returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil
 	}
 
 	var pods podList
 	if err := json.Unmarshal(body, &pods); err != nil {
-		return err
+		log.Printf("pod check: parse failed: %v", err)
+		return nil
 	}
 
+	var faults []PodFault
 	notReady := 0
-	restarts := 0
+	totalRestarts := 0
+
 	for _, pod := range pods.Items {
+		var issues []containerIssue
+
+		// 检查整 Pod 是否异常
 		if pod.Status.Phase != "Running" && pod.Status.Phase != "Succeeded" {
 			notReady++
-			log.Printf("pod attention namespace=%s name=%s phase=%s", pod.Metadata.Namespace, pod.Metadata.Name, pod.Status.Phase)
+			log.Printf("pod attention namespace=%s name=%s phase=%s",
+				pod.Metadata.Namespace, pod.Metadata.Name, pod.Status.Phase)
 		}
+
+		// 检查每个容器
 		for _, status := range pod.Status.ContainerStatuses {
-			restarts += status.RestartCount
+			totalRestarts += status.RestartCount
 			if !status.Ready && pod.Status.Phase == "Running" {
-				log.Printf("container not ready pod=%s container=%s restarts=%d", pod.Metadata.Name, status.Name, status.RestartCount)
+				log.Printf("container not ready pod=%s container=%s restarts=%d",
+					pod.Metadata.Name, status.Name, status.RestartCount)
+				issues = append(issues, containerIssue{
+					Container:    status.Name,
+					RestartCount: status.RestartCount,
+					Ready:        status.Ready,
+				})
 			}
+		}
+
+		// 如果该 Pod 有问题，加入故障列表
+		if pod.Status.Phase != "Running" && pod.Status.Phase != "Succeeded" || len(issues) > 0 {
+			faults = append(faults, PodFault{
+				Namespace: pod.Metadata.Namespace,
+				Name:      pod.Metadata.Name,
+				Phase:     pod.Status.Phase,
+				Issues:    issues,
+			})
 		}
 	}
 
-	log.Printf("cluster check namespace=%s pods=%d not_ready=%d restarts=%d", cfg.Namespace, len(pods.Items), notReady, restarts)
-	return nil
+	log.Printf("cluster check namespace=%s pods=%d not_ready=%d restarts=%d",
+		cfg.Namespace, len(pods.Items), notReady, totalRestarts)
+
+	return faults
 }
 
 func envOrDefault(key, fallback string) string {

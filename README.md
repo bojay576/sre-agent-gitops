@@ -1,219 +1,202 @@
 # SRE Agent
 
-智能运维 Agent 项目，用于定时扫描 Kubernetes 中指定命名空间的 Pod 状态，发现异常 Pod、非 Ready 容器和重启次数，并写入日志。
+智能运维 Agent，定时扫描 Kubernetes 指定命名空间的 Pod 状态，检测异常并通过可选的 LLM 分析给出处理建议，支持自动自愈。
 
-默认部署命名空间是 `sre-system`，默认监控命名空间是 `default`。
-
----
-
-## Agent 是如何工作的？
-
-### 架构图
-
-```
-  ┌─────────────────────────────────────────────┐
-  │              Kubernetes 集群                  │
-  │                                              │
-  │  ┌──────────────┐   HTTP (TLS)   ┌────────┐ │
-  │  │  SRE Agent   │ ──────────────►│ K8s    │ │
-  │  │  (Pod)       │◄──────────────│ API    │ │
-  │  │              │   JSON 响应    │ Server │ │
-  │  └──────┬───────┘               └────────┘ │
-  │         │                                   │
-  │         │ 定时轮询 POLL_INTERVAL_SECONDS      │
-  │         ▼                                   │
-  │  ┌──────────────┐                           │
-  │  │  日志输出     │                           │
-  │  │  - pod attention                          │
-  │  │  - container not ready                    │
-  │  │  - cluster check                          │
-  │  └──────────────┘                           │
-  └─────────────────────────────────────────────┘
-```
-
-### 调用了什么 API？
-
-SRE Agent **不调用任何大模型 API**。它是一个传统的运维守护进程，直接调用 **Kubernetes API Server**：
-
-| 请求 | 说明 |
-|------|------|
-| `GET /api/v1/namespaces/{namespace}/pods` | 列出指定命名空间的所有 Pod 及其状态 |
-
-Agent 使用 **Service Account** 进行认证：
-
-- **Token 文件**: `/var/run/secrets/kubernetes.io/serviceaccount/token`（由 K8s 自动挂载）
-- **CA 证书**: `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`（验证 API Server 的 TLS 证书）
-- **权限**: 通过 ClusterRole `sre-agent-role` 授予 `get/list/watch pods`、`get/list/watch events`、`delete pods` 权限
-
-### Agent 做了什么？
-
-1. 每 `POLL_INTERVAL_SECONDS`（默认 30s）轮询一次 K8s API
-2. 找出**非 Running/Succeeded** 状态的 Pod → 输出 `pod attention`
-3. 找出 **Ready=false** 的容器 → 输出 `container not ready`
-4. 汇总统计 → 输出 `cluster check`
-
-全部结果通过 **标准日志输出**，不存储到数据库也不发送告警。
+默认部署命名空间 `sre-system`，默认监控命名空间 `default`。
 
 ---
 
-## 使用方式
+## 工作原理
 
-### 环境变量
+```
+┌─────────────────────────────────────────────┐
+│              Kubernetes 集群                  │
+│                                              │
+│  ┌──────────────┐   GET /api/v1/.../pods    │
+│  │  SRE Agent   │ ────────────────────────► │
+│  │  (Pod)       │◄──────────────────────── │
+│  │              │   JSON (PodList)          │
+│  └──┬───┬───────┘                           │
+│     │   │                                    │
+│     │   └─ 故障 Pod? ──► LLM 分析 ──► 自愈   │
+│     │                     │                  │
+│     └─ 定时轮询: POLL_INTERVAL_SECONDS       │
+└─────────────────────────────────────────────┘
+```
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `WATCH_NAMESPACE` | `default` | 要监控的命名空间 |
-| `POLL_INTERVAL_SECONDS` | `30` | 轮询间隔（秒），最小 5 |
-| `NAMESPACE` | `sre-system` | Agent 自身的部署命名空间 |
-| `SRE_AGENT_IMAGE` | `ghcr.io/bojay576/sre-agent:latest` | 容器镜像 |
-| `USE_LOCAL_IMAGES` | `false` | 是否从本地源码构建镜像 |
-| `KUBERNETES_API_URL` | 自动从 `KUBERNETES_SERVICE_HOST` 获取 | 手动指定 API Server 地址 |
+**认证方式**：通过挂载的 Service Account Token（`/var/run/secrets/kubernetes.io/serviceaccount/token`）和 CA 证书向 K8s API Server 发起 HTTPS 请求。
 
-### 部署
+**单次请求**：`GET /api/v1/namespaces/{namespace}/pods`，返回所有 Pod 及其状态。
+
+**输出**：全部通过标准日志（stdout），格式为 `key=value` 便于 grep 或对接日志系统。
+
+**LLM 集成**（可选）：设置 `LLM_PROVIDER` 后，检测到故障 Pod 时将状态发给大模型，返回分析结果和处理建议。支持 Ollama（本地）和 OpenAI-compatible API（OpenAI / Anthropic / 兼容代理）。
+
+**自愈**（可选）：设置 `AUTO_HEAL=true` 后，自动执行 LLM 建议的操作（如 `delete_pod`）。默认 dry-run 模式只打印不执行。
+
+---
+
+## 快速开始
 
 ```bash
-# 默认部署（监控 default 命名空间）
+# 默认部署
 ./deploy.sh
 
 # 指定监控命名空间
 WATCH_NAMESPACE=production ./deploy.sh
-
-# 部署到自定义命名空间
-NAMESPACE=my-observability ./deploy.sh
-
-# 使用自定义镜像
-SRE_AGENT_IMAGE=my-registry/sre-agent:v1.2.0 ./deploy.sh
-
-# 从当前源码构建本地镜像并部署
-USE_LOCAL_IMAGES=true ./deploy.sh
 ```
 
-### 查看结果
+查看日志：
 
 ```bash
 kubectl logs -n sre-system deploy/sre-agent -f
 ```
 
-日志示例：
+卸载：
 
-```text
-SRE Agent started namespace=default poll_interval=30s api_server=https://10.96.0.1:443
-pod attention namespace=default name=example phase=Pending
-container not ready pod=example container=app restarts=3
-cluster check namespace=default pods=3 not_ready=1 restarts=3
+```bash
+./uninstall.sh
 ```
 
 ---
 
-## 如何更改和扩展？
+## 环境变量
 
-### 修改监控配置
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `WATCH_NAMESPACE` | `default` | 监控目标命名空间 |
+| `POLL_INTERVAL_SECONDS` | `30` | 轮询间隔（最小 5s） |
+| `NAMESPACE` | `sre-system` | Agent 自身部署命名空间 |
+| `SRE_AGENT_IMAGE` | `ghcr.io/bojay576/sre-agent:latest` | 容器镜像 |
+| `USE_LOCAL_IMAGES` | `false` | 从本地源码构建并加载镜像 |
+| `KUBERNETES_API_URL` | 自动检测 | 手动指定 K8s API Server 地址 |
+| `LLM_PROVIDER` | _(空)_ | 大模型提供商：`openai` 或 `ollama` |
+| `LLM_API_URL` | _(空)_ | API 地址，如 `http://ollama:11434` |
+| `LLM_API_KEY` | _(空)_ | API Key（OpenAI 等云服务需要） |
+| `LLM_MODEL` | `gpt-4o-mini` | 模型名称 |
+| `AUTO_HEAL` | `false` | 启用自动自愈（设为 `true`） |
+| `AUTO_HEAL_DRY_RUN` | `true` | dry-run 模式，只打印不执行 |
 
-直接修改环境变量重新部署即可，无需改代码：
+---
+
+## LLM 集成
+
+支持两种模式：
+
+### Ollama（本地部署，无需外网）
 
 ```bash
-POLL_INTERVAL_SECONDS=10 WATCH_NAMESPACE=staging ./deploy.sh
+LLM_PROVIDER=ollama \
+LLM_API_URL=http://ollama:11434 \
+LLM_MODEL=qwen2.5:7b \
+./deploy.sh
 ```
 
-### 修改源码
-
-1. 编辑 `src/sre-agent/main.go`
-2. 构建镜像并部署：
+### OpenAI-compatible API（OpenAI / Anthropic / 兼容代理）
 
 ```bash
-USE_LOCAL_IMAGES=true SRE_AGENT_IMAGE=sre-agent:dev ./deploy.sh
+LLM_PROVIDER=openai \
+LLM_API_URL=https://api.openai.com/v1 \
+LLM_API_KEY=sk-xxxx \
+LLM_MODEL=gpt-4o-mini \
+./deploy.sh
 ```
 
-或者推送到镜像仓库：
+### 自愈控制
 
 ```bash
+# dry-run 模式（默认）：仅打印将要执行的操作
+AUTO_HEAL=true ./deploy.sh
+
+# 关闭 dry-run，真正执行操作
+AUTO_HEAL=true AUTO_HEAL_DRY_RUN=false ./deploy.sh
+```
+
+LLM 分析后返回的结构化结果包含：
+- `severity`: `low | medium | high | critical`
+- `can_auto_heal`: 是否适合自动处理
+- `actions`: 建议操作列表（如 `delete_pod`）
+
+自愈执行器根据 `can_auto_heal` 和 `AUTO_HEAL` 开关决定是否执行，同一 Pod 在 5 分钟内不重复操作。
+
+---
+
+## 日志说明
+
+```
+SRE Agent started namespace=default poll_interval=30s api_server=https://10.96.0.1:443
+pod attention namespace=default name=example phase=Pending
+container not ready pod=example container=app restarts=3
+cluster check namespace=default pods=3 not_ready=1 restarts=3
+LLM enabled provider=ollama model=qwen2.5:7b
+remedy: LLM analysis severity=high can_auto_heal=true actions=1 auto_heal=true dry_run=false
+remedy: analysis: Pod fault-crashloop is in CrashLoopBackOff due to container exiting immediately on start.
+remedy: delete_pod default/fault-crashloop reason="Restart loop, delete to allow fresh start"
+remedy: ✅ deleted pod default/fault-crashloop (HTTP 200)
+```
+
+---
+
+## 故障测试
+
+提供 5 种故障 Pod 用于验证 Agent 检测和 LLM 自愈：
+
+```bash
+# 部署故障 Pod
+kubectl apply -f tests/fault-pods/
+
+# 观察 Agent 检测和自愈
+kubectl logs -n sre-system deploy/sre-agent -f
+
+# 清理
+kubectl delete -f tests/fault-pods/
+```
+
+详见 [tests/fault-pods/](tests/fault-pods/)。
+
+---
+
+## 开发
+
+```bash
+# 从本地源码构建并部署
+USE_LOCAL_IMAGES=true ./deploy.sh
+
+# 推送到镜像仓库后部署
 docker build -t ghcr.io/your-org/sre-agent:custom src/sre-agent
 docker push ghcr.io/your-org/sre-agent:custom
 SRE_AGENT_IMAGE=ghcr.io/your-org/sre-agent:custom ./deploy.sh
 ```
 
-### 修改 RBAC 权限
+### 文件结构
 
-编辑 `apps/sre-agent/rbac.yaml`，修改后：
-
-```bash
-kubectl apply -f apps/sre-agent/rbac.yaml
+```
+.
+├── apps/
+│   ├── namespace.yaml             # sre-system 命名空间
+│   └── sre-agent/
+│       ├── deployment.yaml        # Deployment（含 LLM 配置注释）
+│       └── rbac.yaml              # ServiceAccount + ClusterRole + Binding
+├── src/sre-agent/
+│   ├── main.go                    # 主循环 + Pod 检查
+│   ├── llm.go                     # LLM 客户端（Ollama / OpenAI）
+│   ├── remedy.go                  # 自愈执行器
+│   ├── Dockerfile
+│   └── go.mod
+├── tests/fault-pods/              # 故障 Pod 测试集
+├── deploy.sh
+└── uninstall.sh
 ```
 
-### 新增功能示例
-
-在 `main.go` 中添加新的检查逻辑（如检查 Events、检查 PVC 状态等），然后按上述步骤重新构建部署即可。
-
----
-
-## 卸载
+## 回退
 
 ```bash
-# 删除 Deployment 和 RBAC（保留命名空间）
-kubectl delete deploy sre-agent -n sre-system
-kubectl delete ClusterRoleBinding sre-agent-binding
-kubectl delete ClusterRole sre-agent-role
-kubectl delete sa sre-agent-sa -n sre-system
-
-# 完全卸载（删除所有资源，包括命名空间）
-kubectl delete ns sre-system
-
-# 或使用 manifest 文件反向删除
-kubectl delete -f apps/sre-agent/deployment.yaml
-kubectl delete -f apps/sre-agent/rbac.yaml
-kubectl delete -f apps/namespace.yaml
-```
-
-## 回退到旧版本
-
-```bash
-# 方法一：指定旧版本镜像重新部署
+# 指定旧版本镜像
 SRE_AGENT_IMAGE=ghcr.io/bojay576/sre-agent:v1.0.0 ./deploy.sh
 
-# 方法二：直接在 Deployment 上修改镜像
-kubectl set image deploy/sre-agent -n sre-system agent=ghcr.io/bojay576/sre-agent:v1.0.0
-
-# 方法三：回滚到上一个版本
+# 原地回滚
 kubectl rollout undo deploy/sre-agent -n sre-system
 
 # 查看部署历史
 kubectl rollout history deploy/sre-agent -n sre-system
 ```
-
----
-
-## 目录结构
-
-```text
-.
-├── apps/                          # K8s 部署清单
-│   ├── namespace.yaml             # sre-system 命名空间
-│   └── sre-agent/                 # Agent 相关资源
-│       ├── deployment.yaml        # Deployment
-│       └── rbac.yaml              # ServiceAccount + ClusterRole + Binding
-├── src/
-│   └── sre-agent/                 # Go 源码
-│       ├── main.go                # 主程序
-│       ├── Dockerfile             # 构建镜像
-│       └── go.mod                 # Go 模块定义
-└── deploy.sh                      # 一键部署脚本
-```
-
----
-
-## 项目文件说明
-
-| 文件 | 作用 |
-|------|------|
-| `apps/namespace.yaml` | 创建 `sre-system` 命名空间 |
-| `apps/sre-agent/rbac.yaml` | 定义 ServiceAccount、ClusterRole（pod 只读+删除权限）、ClusterRoleBinding |
-| `apps/sre-agent/deployment.yaml` | Deployment 配置，含环境变量和资源限制 |
-| `src/sre-agent/main.go` | Agent 核心逻辑：Service Account 认证、调用 K8s API、Pod 状态检查 |
-| `src/sre-agent/Dockerfile` | 基于 scratch 构建的极小镜像 |
-| `deploy.sh` | 部署脚本，支持环境变量覆盖 |
-
----
-
-## 许可
-
-MIT

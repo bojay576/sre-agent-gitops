@@ -13,7 +13,7 @@ spec:
       labels:
         app: sre-agent
     spec:
-      serviceAccountName: sre-agent-sa # 关联ServiceAccount
+      serviceAccountName: sre-agent-sa
       containers:
       - name: agent
         image: ghcr.io/bojay576/sre-agent:latest
@@ -23,6 +23,22 @@ spec:
           value: "default"
         - name: POLL_INTERVAL_SECONDS
           value: "30"
+        # --- 大模型配置（可选，不设置则不启用）---
+        # Provider: "openai"（兼容 OpenAI/Anthropic/任意 OpenAI 代理）或 "ollama"
+        #- name: LLM_PROVIDER
+        #  value: "ollama"
+        #- name: LLM_API_URL
+        #  value: "http://ollama:11434"
+        #- name: LLM_API_KEY
+        #  value: ""
+        #- name: LLM_MODEL
+        #  value: "qwen2.5:7b"
+        # --- 自愈控制 ---
+        # AUTO_HEAL=true 才真正执行操作，默认 dry-run 只打印不执行
+        #- name: AUTO_HEAL
+        #  value: "true"
+        #- name: AUTO_HEAL_DRY_RUN
+        #  value: "false"
         resources:
           requests:
             cpu: "100m"
