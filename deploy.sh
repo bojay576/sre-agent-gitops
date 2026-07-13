@@ -192,31 +192,35 @@ do_deploy() {
     render_manifest "$dep_file" > "$tmp"
 
     if [ "$DEPLOY_MODE" != "basic" ]; then
-        # 在 resources 前插入 LLM 环境变量
-        sed -i '' '/resources:/i\
-        - name: LLM_PROVIDER\
-          value: "'"${LLM_PROVIDER}"'"\
-        - name: LLM_API_URL\
-          value: "'"${LLM_API_URL}"'"\
-        - name: LLM_MODEL\
-          value: "'"${LLM_MODEL}"'"\
-' "$tmp"
-
-        if [ -n "${LLM_API_KEY:-}" ]; then
-            sed -i '' '/resources:/i\
-        - name: LLM_API_KEY\
-          value: "'"${LLM_API_KEY}"'"\
-' "$tmp"
-        fi
-
-        if [ -n "${AUTO_HEAL:-}" ]; then
-            sed -i '' '/resources:/i\
-        - name: AUTO_HEAL\
-          value: "'"${AUTO_HEAL}"'"\
-        - name: AUTO_HEAL_DRY_RUN\
-          value: "'"${AUTO_HEAL_DRY_RUN:-true}"'"\
-' "$tmp"
-        fi
+        # 在 resources: 前插入 LLM 环境变量（使用 awk 保证跨平台兼容）
+        awk \
+          -v provider="$LLM_PROVIDER" \
+          -v url="$LLM_API_URL" \
+          -v model="$LLM_MODEL" \
+          -v key="${LLM_API_KEY:-}" \
+          -v heal="${AUTO_HEAL:-}" \
+          -v dryrun="${AUTO_HEAL_DRY_RUN:-true}" \
+        '
+          /resources:/ {
+            print "        - name: LLM_PROVIDER"
+            print "          value: \"" provider "\""
+            print "        - name: LLM_API_URL"
+            print "          value: \"" url "\""
+            print "        - name: LLM_MODEL"
+            print "          value: \"" model "\""
+            if (key != "") {
+              print "        - name: LLM_API_KEY"
+              print "          value: \"" key "\""
+            }
+            if (heal != "") {
+              print "        - name: AUTO_HEAL"
+              print "          value: \"" heal "\""
+              print "        - name: AUTO_HEAL_DRY_RUN"
+              print "          value: \"" dryrun "\""
+            }
+          }
+          { print }
+        ' "$tmp" > "${tmp}_" && mv "${tmp}_" "$tmp"
     fi
 
     kubectl apply -f "$tmp"
